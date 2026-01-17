@@ -1,459 +1,95 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Spatial OS – Final</title>
-
-  <!-- Load MediaPipe Libraries (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
-  <style>
-    :root{
-      --accent: #0A84FF;
-      --glass: rgba(20, 20, 25, 0.75);
-      --glass-border: rgba(255, 255, 255, 0.15);
-      --txt: rgba(255, 255, 255, 0.95);
-      --txt-dim: rgba(255, 255, 255, 0.6);
-    }
-    body { margin:0; background:#000; overflow:hidden; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; cursor:none; user-select:none; }
-    #video { display:none; transform:scaleX(-1); }
-    #bg { position:absolute; inset:0; width:100%; height:100%; transform: scaleX(-1); opacity:0.6; filter: blur(30px) saturate(1.2); z-index:0; }
-    #ui { position:absolute; inset:0; z-index:5; pointer-events:none; }
-    
-    .cursor{
-      position:absolute; width:24px; height:24px; border-radius:50%;
-      background: rgba(255,255,255,0.95);
-      box-shadow: 0 0 20px rgba(255,255,255,0.4);
-      transform: translate(-50%,-50%);
-      mix-blend-mode: normal; pointer-events:none;
-      transition: width 0.15s, height 0.15s, transform 0.15s;
-      z-index: 1000; will-change: left, top, transform;
-    }
-    .cursor.clicking{ background: var(--accent); transform: translate(-50%,-50%) scale(0.8); }
-    .cursor.grabbing { width: 32px; height: 32px; background: rgba(255,255,255,0.3); backdrop-filter:blur(10px); border:1px solid white; }
-    .cursor.snapped { 
-      background: rgba(255,255,255,0.4); 
-      transform: translate(-50%,-50%) scale(1.5);
-      border: 1px solid rgba(255,255,255,0.8);
-    }
-
-    #statusPill{
-      position:absolute; top:24px; left:50%; transform:translateX(-50%);
-      padding:12px 24px; border-radius:99px; background: rgba(10, 10, 15, 0.6);
-      border: 1px solid var(--glass-border); backdrop-filter: blur(24px);
-      color: var(--txt); font-weight: 500; letter-spacing: 0.5px; pointer-events:none;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.3); display:flex; align-items:center; gap:10px;
-    }
-    #statusPill::before { content:''; width:8px; height:8px; background:#32d74b; border-radius:50%; box-shadow:0 0 10px #32d74b; }
-
-    #startOverlay {
-      position:absolute; inset:0; z-index:999; background: #000;
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
-      transition: opacity 0.8s ease-in-out; pointer-events: auto;
-    }
-    .btn {
-      padding: 18px 42px; font-size:17px; font-weight:500; letter-spacing: -0.01em;
-      background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius:99px;
-      cursor:pointer; backdrop-filter: blur(20px); transition: all 0.3s ease;
-    }
-    .btn:hover { background: rgba(255,255,255,0.2); transform:scale(1.02); }
-
-    /* Vision Pro Calibration */
-    #calibLayer {
-      position:absolute; inset:0; z-index:20; background: rgba(5, 5, 8, 0.85);
-      backdrop-filter: blur(40px) saturate(110%); display:none; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto;
-    }
-    #calibText { color: white; font-size: 28px; font-weight: 600; margin-bottom: 60px; text-align: center; opacity: 0.9; text-shadow: 0 0 20px rgba(255,255,255,0.2); }
-    #calibText span { display:block; font-size:16px; font-weight:400; color:rgba(255,255,255,0.5); margin-top:8px; }
-    
-    .calib-dot {
-      position:absolute; width: 64px; height: 64px; border-radius:50%;
-      border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.02);
-      box-shadow: 0 0 30px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center;
-      opacity: 0; transform: scale(0.5); transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    }
-    .calib-dot::after {
-      content:''; position:absolute; width: 12px; height: 12px; background: #fff; border-radius:50%;
-      box-shadow: 0 0 15px rgba(255,255,255,0.5);
-    }
-    .calib-dot.active { opacity: 1; transform: scale(1); border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.05); }
-    .calib-dot.active::after { animation: pulseFill 2.5s ease-in-out forwards; }
-    @keyframes pulseFill {
-      0% { transform: scale(1); opacity: 0.8; }
-      50% { transform: scale(1.5); opacity: 1; box-shadow: 0 0 30px rgba(255,255,255,0.8); }
-      100% { transform: scale(0.2); opacity: 0; }
-    }
-
-    /* Windows & Dock */
-    .window{
-      position:absolute; width: 600px; height: 400px;
-      left: 50%; top: 46%; transform: translate(-50%,-50%) scale(0.95);
-      opacity: 0; border-radius: 40px; background: rgba(30, 30, 35, 0.6);
-      border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 50px 100px rgba(0,0,0,0.6);
-      backdrop-filter: blur(50px); overflow:hidden; pointer-events:auto;
-      transition: opacity .3s ease, transform .3s cubic-bezier(0.2, 0.8, 0.2, 1);
-      min-width: 300px; min-height: 200px;
-    }
-    .window.open{ opacity:1; transform: translate(-50%,-50%) scale(1); }
-    .window.dragging { transform: translate(-50%,-50%) scale(1.02); box-shadow: 0 60px 120px rgba(0,0,0,0.8); transition: none; }
-    
-    .resize-handle {
-      position: absolute; bottom: 0; right: 0; width: 40px; height: 40px;
-      background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.1) 50%);
-      cursor: nwse-resize; z-index: 10; border-radius: 0 0 40px 0;
-    }
-    .resize-handle:hover { background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.3) 50%); }
-
-    .bar{ height: 64px; display:flex; align-items:center; justify-content:space-between; padding: 0 24px; border-bottom: 1px solid rgba(255,255,255,0.08); cursor: grab; }
-    .content{ height: calc(100% - 64px); padding: 24px; color: var(--txt2); overflow:auto; }
-    .title{ color: var(--txt); font-weight: 500; font-size:17px; display:flex; gap:10px; pointer-events:none; }
-    .close{ width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; cursor: pointer; transition: background 0.2s; }
-    
-    #dock{
-      position:absolute; left:50%; bottom:32px; transform: translateX(-50%);
-      padding:16px; border-radius: 32px; background: rgba(20, 20, 25, 0.5);
-      border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(40px);
-      display:flex; gap:16px; pointer-events:auto; z-index: 50;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.4); will-change: transform;
-    }
-    .icon{
-      width:64px; height:64px; border-radius: 20px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05));
-      border: 1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center;
-      color:#fff; font-size: 32px; transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1);
-      will-change: transform;
-    }
-    .icon:hover{ transform: translateY(-12px) scale(1.15); box-shadow: 0 10px 20px rgba(0,0,0,0.3); background: rgba(255,255,255,0.2); }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spatial Aura</title>
+  <link rel="stylesheet" href="/src/style.css" />
 </head>
 
 <body>
-  <video id="video" playsinline></video>
-  <canvas id="bg"></canvas>
+  <div class="ambient-bg"></div>
+  <canvas id="bg-canvas"></canvas>
 
-  <div id="startOverlay">
-    <button class="btn" onclick="initCamera()">Enter Spatial OS</button>
-  </div>
+  <div id="app">
+    <!-- Landing Page -->
+    <div id="landing" class="landing-container">
+      <div>
+        <h1 class="title">Spatial Aura</h1>
+        <div class="subtitle">Dual-Device Depth Sensing System</div>
+      </div>
 
-  <div id="calibLayer">
-    <div id="calibText">Hand Calibration <span>Look at the dots and hold your finger steady</span></div>
-    <div id="calibContainer"></div>
-  </div>
+      <div class="card-row">
+        <div class="role-card glass" id="btn-target">
+          <div class="role-icon">💻</div>
+          <div class="role-name">Target Mode</div>
+          <div class="role-desc">Laptop/Desktop. Acts as the main display and processing unit.</div>
+        </div>
 
-  <div id="ui">
-    <div id="statusPill">Spatial OS</div>
-    <div id="cursorR" class="cursor"></div>
-    <div id="dock">
-      <div class="icon" data-app="notes" title="Notes">📝</div>
-      <div class="icon" data-app="photos" title="Photos">🖼️</div>
-      <div class="icon" data-app="settings" title="Settings">⚙️</div>
-      <div class="icon" onclick="startCalibration()" title="Calibrate">🎯</div>
+        <div class="role-card glass" id="btn-client">
+          <div class="role-icon">📱</div>
+          <div class="role-name">Client Mode</div>
+          <div class="role-desc">Phone/Tablet. Acts as an external sensor camera.</div>
+        </div>
+      </div>
     </div>
+
+    <!-- Target UI -->
+    <div id="target-ui" class="landing-container hidden">
+      <div class="subtitle">Waiting for Client Connection...</div>
+      <div class="code-display" id="room-code">----</div>
+      <div class="role-desc">Enter this code on your mobile device</div>
+    </div>
+
+    <!-- Client UI -->
+    <div id="client-ui" class="landing-container hidden">
+      <div class="subtitle">Enter Connection Code</div>
+      <input type="number" id="code-input" class="code-input" placeholder="0000" maxlength="4" />
+      <button id="btn-connect" class="btn">Connect Camera</button>
+    </div>
+
+    <!-- Active Workspace (For Target) -->
+    <div id="workspace" class="hidden">
+      <div id="video-container">
+        <!-- Local Webcam -->
+        <video id="local-video" playsinline muted autoplay></video>
+        <!-- Remote Stream (Client) -->
+        <video id="client-video" playsinline autoplay class="hidden" style="opacity:0;"></video>
+        <!-- Hidden visually, processed by JS -->
+      </div>
+
+      <div id="canvas-layer"></div>
+      <div id="cursor" class="cursor"></div>
+
+      <div id="statusPill">
+        Spatial Aura Connected
+      </div>
+
+      <div id="dock">
+        <div class="icon" title="Notes">📝</div>
+        <div class="icon" title="Photos">🖼️</div>
+        <div class="icon" title="Settings">⚙️</div>
+        <div class="icon" title="Calibration">🎯</div>
+      </div>
+
+      <div class="debug-panel glass">
+        <div class="stat-row"><span>FPS:</span> <span id="debug-fps">0</span></div>
+        <div class="stat-row"><span>Gaze X:</span> <span id="debug-x">0</span></div>
+        <div class="stat-row"><span>Gaze Y:</span> <span id="debug-y">0</span></div>
+        <div class="stat-row"><span>Depth:</span> <span id="debug-z">0</span></div>
+      </div>
+    </div>
+
+    <!-- Client Active View -->
+    <div id="client-active" class="landing-container hidden">
+      <div class="status-indicator connected"></div>
+      <div class="title">Streaming...</div>
+      <div class="role-desc">Point camera at user side profile</div>
+    </div>
+
   </div>
-
-<script>
-class KalmanFilter {
-  constructor(processNoise = 0.1, measurementNoise = 2.0, estimatedError = 1.0) {
-    this.Q = processNoise; this.R = measurementNoise; this.P = estimatedError; this.X = 0; this.K = 0; 
-  }
-  update(measurement) {
-    this.P = this.P + this.Q;
-    this.K = this.P / (this.P + this.R);
-    this.X = this.X + this.K * (measurement - this.X);
-    this.P = (1 - this.K) * this.P;
-    return this.X;
-  }
-  setProcessNoise(noise) { this.Q = noise; }
-}
-
-class HandTrackingCalibrator {
-  constructor() {
-    this.minX = 0.2; this.maxX = 0.8; this.minY = 0.2; this.maxY = 0.8;
-    this.isCalibrating = false; this.points = [];
-    this.load();
-  }
-  map(x, y) {
-    let nx = (x - this.minX) / (this.maxX - this.minX);
-    let ny = (y - this.minY) / (this.maxY - this.minY);
-    if(nx < 0) nx = 0; else if(nx > 1) nx = 1;
-    if(ny < 0) ny = 0; else if(ny > 1) ny = 1;
-    return { x: nx * window.innerWidth, y: ny * window.innerHeight };
-  }
-  start() { this.points = []; this.isCalibrating = true; this.minX=1; this.maxX=0; this.minY=1; this.maxY=0; }
-  addPoint(x, y) {
-    this.points.push({x, y});
-    if(x < this.minX) this.minX = x; if(x > this.maxX) this.maxX = x;
-    if(y < this.minY) this.minY = y; if(y > this.maxY) this.maxY = y;
-  }
-  finish() {
-    this.isCalibrating = false;
-    const pad = 0.05;
-    this.minX += pad; this.maxX -= pad; this.minY += pad; this.maxY -= pad;
-    this.save();
-  }
-  save() { localStorage.setItem('spatial_calib', JSON.stringify({ minX: this.minX, maxX: this.maxX, minY: this.minY, maxY: this.maxY })); }
-  load() {
-    const data = localStorage.getItem('spatial_calib');
-    if(data) { const p = JSON.parse(data); this.minX = p.minX; this.maxX = p.maxX; this.minY = p.minY; this.maxY = p.maxY; }
-  }
-}
-
-const calibrator = new HandTrackingCalibrator();
-const kx = new KalmanFilter(0.1, 1.0); 
-const ky = new KalmanFilter(0.1, 1.0); 
-
-const state = {
-  windowZIndex: 10,
-  dragging: { active: false, el: null, offsetX: 0, offsetY: 0 },
-  resizing: { active: false, el: null, startX: 0, startY: 0, startW: 0, startH: 0 },
-  lastX: 0, lastY: 0,
-  windows: [], 
-  wasPinch: false,
-  isPinching: false, // New Hysteresis State
-  w: window.innerWidth, h: window.innerHeight
-};
-
-const el = {
-  v: document.getElementById('video'),
-  bg: document.getElementById('bg'),
-  bgCtx: document.getElementById('bg').getContext('2d', {alpha: false}),
-  cursor: document.getElementById('cursorR'),
-  startOverlay: document.getElementById('startOverlay'),
-  calibLayer: document.getElementById('calibLayer'),
-  calibContainer: document.getElementById('calibContainer')
-};
-
-let resizeTimeout;
-window.addEventListener('resize', () => {
-  clearTimeout(resizeTimeout);
-  resizeTimeout = setTimeout(() => {
-    state.w = window.innerWidth; state.h = window.innerHeight;
-    el.bg.width = state.w; el.bg.height = state.h;
-  }, 100);
-});
-el.bg.width = state.w; el.bg.height = state.h;
-
-async function initCamera() {
-  try {
-    const hands = new Hands({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6
-    });
-    hands.onResults(onResults);
-
-    const camera = new Camera(el.v, { onFrame: async () => { await hands.send({image: el.v}); }, width: 1280, height: 720 });
-    await camera.start();
-    el.startOverlay.style.opacity = 0;
-    setTimeout(() => el.startOverlay.style.display = 'none', 800);
-  } catch (e) { console.error(e); alert("Camera Error: " + e.message); }
-}
-
-function onResults(results) {
-  el.bgCtx.drawImage(results.image, 0, 0, el.bg.width, el.bg.height);
-
-  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    const lm = results.multiHandLandmarks[0];
-    const indexTip = lm[8], thumbTip = lm[4];
-
-    if(calibrator.isCalibrating) {
-      calibrator.addPoint(indexTip.x, indexTip.y);
-      el.cursor.style.transform = `translate(${ (1-indexTip.x)*state.w }px, ${ indexTip.y*state.h }px)`;
-      return;
-    }
-
-    const rawX = 1 - indexTip.x;
-    const rawY = indexTip.y;
-    
-    // Continuous Tracking (No frame skipping)
-    const velocity = Math.hypot(rawX - state.lastX, rawY - state.lastY);
-    const adaptiveQ = (velocity > 0.05) ? 0.8 : 0.05;
-    kx.setProcessNoise(adaptiveQ); ky.setProcessNoise(adaptiveQ);
-    state.lastX = rawX; state.lastY = rawY;
-
-    const mapped = calibrator.map(rawX, rawY);
-    let smoothX = kx.update(mapped.x);
-    let smoothY = ky.update(mapped.y);
-
-    // --- PINCH HYSTERESIS LOGIC ---
-    const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-    const triggerThresh = 0.025; // Harder to click
-    const releaseThresh = 0.050; // Easier to release
-
-    if (!state.isPinching && dist < triggerThresh) {
-      state.isPinching = true;
-    } else if (state.isPinching && dist > releaseThresh) {
-      state.isPinching = false;
-    }
-    
-    const isPinch = state.isPinching;
-    // ------------------------------
-
-    const isPinchDown = isPinch && !state.wasPinch;
-    const isPinchUp = !isPinch && state.wasPinch;
-    state.wasPinch = isPinch;
-
-    // Magnetic Snapping
-    const snapRange = 40;
-    const target = document.elementFromPoint(smoothX, smoothY);
-    let isSnapped = false;
-    
-    if(target && !state.dragging.active && !state.resizing.active) {
-      const snapTarget = target.closest('.icon, .close, .resize-handle');
-      if(snapTarget) {
-        const rect = snapTarget.getBoundingClientRect();
-        const centerX = rect.left + rect.width/2;
-        const centerY = rect.top + rect.height/2;
-        
-        if(Math.hypot(smoothX - centerX, smoothY - centerY) < snapRange) {
-          smoothX += (centerX - smoothX) * 0.4;
-          smoothY += (centerY - smoothY) * 0.4;
-          isSnapped = true;
-        }
-      }
-    }
-
-    el.cursor.style.left = smoothX + 'px';
-    el.cursor.style.top = smoothY + 'px';
-    
-    if(isSnapped) el.cursor.classList.add('snapped');
-    else el.cursor.classList.remove('snapped');
-
-    updateInteraction(smoothX, smoothY, isPinchDown, isPinchUp, isPinch);
-  }
-}
-
-function updateInteraction(x, y, isPinchDown, isPinchUp, isPinching) {
-  const target = document.elementFromPoint(x,y);
-
-  if(isPinching) {
-    if(state.dragging.active) el.cursor.className = 'cursor grabbing';
-    else if(state.resizing.active) el.cursor.className = 'cursor grabbing';
-    else el.cursor.className = 'cursor clicking';
-  } else {
-    if(el.cursor.classList.contains('snapped')) return;
-    el.cursor.className = 'cursor';
-  }
-
-  // 1. Resize Start
-  if(isPinchDown && target && target.classList.contains('resize-handle')) {
-    const win = target.closest('.window');
-    if(win) {
-      state.resizing.active = true; state.resizing.el = win;
-      state.windowZIndex++; win.style.zIndex = state.windowZIndex;
-      state.resizing.startX = x; state.resizing.startY = y;
-      state.resizing.startW = win.offsetWidth; state.resizing.startH = win.offsetHeight;
-      return;
-    }
-  }
-
-  // 2. Drag Start
-  if(isPinchDown && target && target.closest('.bar') && !target.closest('.close')){
-    const win = target.closest('.window');
-    if(win){
-      state.dragging.active = true; state.dragging.el = win;
-      state.windowZIndex++; win.style.zIndex = state.windowZIndex;
-      const rect = win.getBoundingClientRect();
-      state.dragging.offsetX = x - (rect.left + rect.width/2);
-      state.dragging.offsetY = y - (rect.top + rect.height/2);
-      win.classList.add('dragging'); return;
-    }
-  }
-
-  // 3. Resize Move
-  if(state.resizing.active && isPinching) {
-    const dx = x - state.resizing.startX;
-    const dy = y - state.resizing.startY;
-    state.resizing.el.style.width = (state.resizing.startW + dx) + 'px';
-    state.resizing.el.style.height = (state.resizing.startH + dy) + 'px';
-    return;
-  }
-
-  // 4. Drag Move
-  if(state.dragging.active && isPinching){
-    state.dragging.el.style.transform = `translate(-50%, -50%) translate(${x - state.dragging.offsetX}px, ${y - state.dragging.offsetY}px) scale(1.02)`;
-    return;
-  }
-
-  // 5. End Actions
-  if(!isPinching) {
-    if(state.dragging.active) {
-      state.dragging.el.style.transform = ''; 
-      state.dragging.el.style.left = (x - state.dragging.offsetX) + 'px';
-      state.dragging.el.style.top = (y - state.dragging.offsetY) + 'px';
-      state.dragging.el.classList.remove('dragging');
-      state.dragging.active = false; state.dragging.el = null;
-    }
-    if(state.resizing.active) {
-      state.resizing.active = false; state.resizing.el = null;
-    }
-  }
-
-  // 6. Click Actions
-  if(isPinchDown && !state.dragging.active && !state.resizing.active && target){
-    const win = target.closest('.window'); 
-    if(win) { state.windowZIndex++; win.style.zIndex = state.windowZIndex; }
-
-    const icon = target.closest('.icon');
-    if(icon && icon.dataset.app) { openWindow(icon.dataset.app); return; }
-
-    const close = target.closest('.close');
-    if(close){ 
-      const w = close.closest('.window'); 
-      w.classList.remove('open'); 
-      setTimeout(()=>w.remove(), 220); return; 
-    }
-  }
-}
-
-function openWindow(app){
-  const win = document.createElement('div');
-  win.className = 'window open';
-  state.windowZIndex++; win.style.zIndex = state.windowZIndex;
-  
-  let icon = '🧊', title = app.toUpperCase(), content = '';
-  if(app === 'notes'){ icon = '📝'; title = 'Notes'; content = 'Type here...'; }
-  if(app === 'photos'){ icon = '🖼️'; title = 'Photos'; content = 'Photos app placeholder'; }
-  if(app === 'settings'){ icon = '⚙️'; title = 'Settings'; content = 'System settings...'; }
-
-  win.innerHTML = `<div class="bar"><div class="title"><span>${icon}</span> ${title}</div><div class="close">×</div></div><div class="content">${content}</div><div class="resize-handle"></div>`;
-  document.body.appendChild(win);
-  state.windows.push(win);
-}
-
-const calibPoints = [
-  {x:'50%', y:'50%'}, {x:'50%', y:'15%'}, {x:'85%', y:'35%'}, 
-  {x:'85%', y:'65%'}, {x:'50%', y:'85%'}, {x:'15%', y:'65%'}, {x:'15%', y:'35%'}
-];
-let calibIdx = 0;
-
-function startCalibration() {
-  el.calibLayer.style.display = 'flex';
-  calibrator.start(); calibIdx = 0; showNextDot();
-}
-
-function showNextDot() {
-  el.calibContainer.innerHTML = '';
-  if(calibIdx >= calibPoints.length) {
-    calibrator.finish(); el.calibLayer.style.display = 'none'; return;
-  }
-  const p = calibPoints[calibIdx];
-  const dot = document.createElement('div');
-  dot.className = 'calib-dot';
-  dot.style.left = p.x; dot.style.top = p.y;
-  el.calibContainer.appendChild(dot);
-  
-  setTimeout(() => dot.classList.add('active'), 200);
-  setTimeout(() => { calibIdx++; showNextDot(); }, 2800);
-}
-
-window.addEventListener('keydown', (e) => { if(e.key.toLowerCase() === 'c') startCalibration(); });
-</script>
+  <script type="module" src="/src/main.js"></script>
 </body>
+
 </html>
